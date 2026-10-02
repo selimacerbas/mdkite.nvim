@@ -54,6 +54,8 @@ Open any Markdown file, then:
 
 > The first start opens your browser. Subsequent updates reuse the same tab.
 
+**A dotted filetype with a `markdown` part**, such as `rzk.markdown` for a literate file, previews whole as Markdown too, with no config: Neovim reads a dotted filetype as each of its parts in turn. Other filetypes join them through `filetypes` (see [Other filetypes](#other-filetypes)).
+
 **`.mmd` / `.mermaid` files** are fully supported: the entire file is rendered as a diagram.
 
 For **other non-markdown files**, place your cursor inside a fenced ```` ```mermaid ```` block: the plugin extracts and previews just that diagram.
@@ -161,6 +163,8 @@ require("mdkite").setup({
 
   yaml_mode = "panel",                  -- front matter: "panel" (collapsible above preview), "hide", or "raw"
 
+  filetypes = {},                       -- more filetypes previewed whole as markdown, e.g. { "quarto", "rmd" } (see Other filetypes)
+
   allow_raw_html = true,                -- render raw HTML in markdown; false is meant to render it as text and is being hardened (see Security)
 
   scroll_sync = true,                   -- browser follows cursor position
@@ -175,6 +179,18 @@ require("mdkite").setup({
   },
 })
 ```
+
+### Other filetypes
+
+A buffer previews whole as Markdown when its filetype is `markdown` or a dotted one with a `markdown` part (`rzk.markdown`), with no config. `filetypes` adds filetypes with no such part:
+
+```lua
+require("mdkite").setup({
+  filetypes = { "quarto", "rmd" },
+})
+```
+
+The list adds to `markdown` and never replaces it. A value that is not a list of filetype names (a bare string, a number in the list, an empty name) is refused by `setup()` with one error notice, and that call changes nothing. A `.mmd` or `.mermaid` file needs no entry: it previews as one diagram. Naming `mermaid` in `filetypes` would preview such a buffer whole as Markdown, so its diagram shows as text. Any other buffer previews the mermaid block under the cursor.
 
 ### Hooks
 
@@ -273,7 +289,7 @@ Rendered preview (scroll preserved, no flicker)
 ```
 
 - **Rust renderer** (`mermaid_renderer = "rust"`): mermaid fences are pre-rendered to SVG via the `mmdr` CLI before writing to `content.md`. The browser receives ready-made SVGs with no mermaid.js overhead. Failed blocks fall back to browser-side rendering automatically.
-- **Markdown files**: The entire buffer is written to `content.md`
+- **Markdown files** (filetype `markdown`, a dotted one with a `markdown` part, or one listed in `filetypes`): The entire buffer is written to `content.md`
 - **Mermaid files** (`.mmd`, `.mermaid`): The entire buffer is wrapped in a mermaid code fence
 - **Other files**: The mermaid block under the cursor is extracted (via Tree-sitter or regex fallback) and wrapped in a code fence
 - **SSE** (Server-Sent Events) from `kitehost.nvim` push updates instantly (no polling)

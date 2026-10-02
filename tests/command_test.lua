@@ -6,7 +6,12 @@
 -- commands from before the rename run their subcommand and warn once a
 -- session each. Sections 5 and 6 drive toggle against a real server: it
 -- starts a stopped preview and stops a running one, a preview joined to
--- another Neovim's included.
+-- another Neovim's included. Sections 7 to 10 start real previews too: a
+-- buffer whose dotted filetype has a markdown part, first or last, is
+-- served whole, as is one setup's filetypes lists, beside markdown and in
+-- place of an earlier setup's list; setup refuses a filetypes that is not
+-- a list of names with one error and changes nothing; and a refresh reads
+-- the set setup built instead of building its own.
 --
 -- Run: nvim --headless -u NONE -l "$PWD/tests/command_test.lua"
 -- kitehost.nvim is found by tests/helpers.lua ($KITEHOST_RTP,
@@ -201,6 +206,153 @@ H.case("Section 6: toggle stops a preview joined to another Neovim's", function(
 	eq(mp._is_primary, nil, "toggle leaves the joined preview")
 	eq(mp._server_instance, nil, "and starts no server of its own")
 	eq(H.http_get(("http://127.0.0.1:%d/"):format(port)).status, 200, "the other Neovim's preview still answers")
+end)
+
+-- Each row previews a buffer of its own, its filetype set after the edit,
+-- so no detection from the file's name stands in for it.
+local function buffer_of(name, filetype, text)
+	local path = vim.fs.joinpath(H.tmpdir(), name)
+	H.write_file(path, text)
+	vim.cmd("edit " .. vim.fn.fnameescape(path))
+	vim.bo.filetype = filetype
+end
+
+-- The text the running preview serves as its content, or nil when none runs.
+local function served()
+	local inst = mp._server_instance
+	if not inst then
+		return nil
+	end
+	local r = H.http_get(("http://127.0.0.1:%d/content.md?t=%s"):format(inst.port, mp._token))
+	return r.status == 200 and r.body or nil
+end
+
+-- The notices fn makes, recorded instead of shown; a raise goes on as one.
+local function noticed(fn, ...)
+	local notes, real_notify = {}, vim.notify
+	vim.notify = function(msg, level)
+		table.insert(notes, { msg = msg, level = level })
+	end
+	local ran, err = pcall(fn, ...)
+	vim.notify = real_notify
+	if not ran then
+		error(tostring(err), 0)
+	end
+	return notes
+end
+
+-- Starts a preview of the current buffer; what it serves, and its notices.
+local function started()
+	local notes = noticed(mp.start)
+	return served(), notes
+end
+
+-- A buffer not previewed whole is searched for the mermaid fence under the
+-- cursor, which these buffers lack, so its start is that one error.
+local function no_fence(notes)
+	return #notes == 1 and notes[1].level == vim.log.levels.ERROR and notes[1].msg:find("```mermaid", 1, true) ~= nil
+end
+
+H.case("Section 7: a filetype with a markdown part previews the buffer whole", function()
+	mp.setup({ open_browser = false, instance_mode = "multi", port = 0 })
+	H.defer(mp.stop)
+	local body, notes
+	-- The markdown part last, then first: a match on one end alone fails a row.
+	for _, filetype in ipairs({ "rzk.markdown", "markdown.pandoc" }) do
+		buffer_of("literate." .. filetype, filetype, "# literate\n\nprose and code\n")
+		body, notes = started()
+		eq(body, "# literate\n\nprose and code", filetype .. " previews the buffer whole with no filetypes set")
+		eq(#notes, 0, filetype .. "'s start makes no notice")
+		mp.stop()
+	end
+	-- A part that only begins or ends with the word is another filetype.
+	for _, filetype in ipairs({ "rzk", "rzk.xmarkdown", "markdownx" }) do
+		buffer_of("other." .. filetype, filetype, "# not markdown\n")
+		body, notes = started()
+		eq(body, nil, filetype .. " starts no preview of the buffer whole")
+		ok(no_fence(notes), filetype .. " is searched for a mermaid fence: " .. tostring(notes[1] and notes[1].msg))
+	end
+end)
+
+H.case("Section 8: filetypes previews more filetypes whole, beside markdown", function()
+	mp.setup({ open_browser = false, instance_mode = "multi", port = 0 })
+	H.defer(function()
+		mp.stop()
+		mp.setup({ filetypes = {} })
+	end)
+	buffer_of("report.qmd", "quarto", "# quarto report\n")
+	local body, notes = started()
+	eq(body, nil, "quarto starts no preview of the buffer whole with no filetypes set")
+	ok(no_fence(notes), "quarto is searched for a mermaid fence: " .. tostring(notes[1] and notes[1].msg))
+	mp.setup({ filetypes = { "quarto" } })
+	for _, case in ipairs({
+		{ "report.qmd", "quarto", "# quarto report" },
+		{ "plain.md", "markdown", "# plain markdown" },
+		{ "literate.rzk", "rzk.markdown", "# literate" },
+	}) do
+		local name, filetype, text = case[1], case[2], case[3]
+		buffer_of(name, filetype, text .. "\n")
+		body, notes = started()
+		eq(body, text, filetype .. ' previews the buffer whole with filetypes = { "quarto" }')
+		eq(#notes, 0, filetype .. "'s start makes no notice")
+		mp.stop()
+	end
+	-- A later setup's list replaces the earlier one, never adds to it.
+	mp.setup({ filetypes = { "rmd" } })
+	buffer_of("report.qmd", "quarto", "# quarto report\n")
+	body, notes = started()
+	eq(body, nil, 'quarto starts no preview of the buffer whole once filetypes = { "rmd" }')
+	ok(no_fence(notes), "quarto is searched for a mermaid fence again: " .. tostring(notes[1] and notes[1].msg))
+end)
+
+H.case("Section 9: setup refuses a filetypes that is not a list of filetype names", function()
+	local want = 'mdkite: filetypes takes a list of filetype names, such as { "quarto" }; setup changed nothing'
+	mp.setup({ filetypes = { "quarto" }, debounce_ms = 300 })
+	H.defer(function()
+		mp.setup({ filetypes = {} })
+	end)
+	local list, set = mp.config.filetypes, mp._filetype_set
+	for _, case in ipairs({
+		-- ipairs raises on a string, so setup would end in a raw Lua error.
+		{ "a string", "quarto" },
+		{ "a table that is no list", { kind = "quarto" } },
+		{ "a list with a number in it", { "quarto", 3 } },
+		-- No buffer has the empty filetype name, but one with none would match it.
+		{ "a list with an empty name in it", { "" } },
+	}) do
+		local label, value = case[1], case[2]
+		local notes = noticed(mp.setup, { filetypes = value, debounce_ms = 1 })
+		eq(#notes, 1, label .. " gives one notice")
+		local note = notes[1] or {}
+		eq(note.level, vim.log.levels.ERROR, label .. " gives an error")
+		eq(note.msg, want, label .. " says what filetypes takes")
+		eq(mp.config.debounce_ms, 300, label .. " leaves the rest of the call unapplied")
+		ok(
+			rawequal(mp.config.filetypes, list) and rawequal(mp._filetype_set, set),
+			label .. " leaves filetypes and the set setup built as they were"
+		)
+	end
+end)
+
+H.case("Section 10: setup builds the filetype set once, and a refresh reads that set", function()
+	mp.setup({ open_browser = false, instance_mode = "multi", port = 0, filetypes = { "quarto" } })
+	H.defer(function()
+		mp.stop()
+		mp.setup({ filetypes = {} })
+	end)
+	buffer_of("first.md", "markdown", "# first\n")
+	eq((started()), "# first", "a markdown buffer starts the preview")
+	local set = mp._filetype_set
+	-- The config keeps the list setup was given, so a refresh that built the
+	-- set again would read a name added to it afterwards.
+	table.insert(mp.config.filetypes, "late")
+	buffer_of("late.txt", "late", "# late\n")
+	mp.refresh()
+	eq(served(), "# first", "a refresh does not read a filetype added to the config after setup")
+	buffer_of("report.qmd", "quarto", "# quarto report\n")
+	mp.refresh()
+	eq(served(), "# quarto report", "a refresh writes a buffer of a filetype setup was given")
+	ok(rawequal(mp._filetype_set, set), "and the set it read is the one setup built")
 end)
 
 H.finish()

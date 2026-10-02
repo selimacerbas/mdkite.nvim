@@ -131,6 +131,11 @@ M.config = {
 	-- "raw"   = leave it in the document (renders as markdown)
 	yaml_mode = "panel",
 
+	-- Filetypes previewed whole as markdown beside markdown itself, which
+	-- always is, e.g. { "quarto", "rmd" }. A dotted filetype with a markdown
+	-- part (rzk.markdown) needs no entry.
+	filetypes = {},
+
 	-- Fraction (0–1): vertical position of the final line when scrolled to end.
 	-- 0.5 = middle of viewport (default), 1.0 = bottom edge (no extra space)
 	bottom_padding = 0.5,
@@ -143,10 +148,46 @@ M.config = {
 	},
 }
 
+-- A string raises in ipairs, a table that is no list reads as no names and
+-- a name that is not a string matches no buffer, so the last two would
+-- leave a preview off with nothing said; the empty name would match every
+-- buffer with no filetype.
+local function is_filetype_list(value)
+	if type(value) ~= "table" or not vim.islist(value) then
+		return false
+	end
+	for _, name in ipairs(value) do
+		if type(name) ~= "string" or name == "" then
+			return false
+		end
+	end
+	return true
+end
+
+-- Built by setup and read by every refresh, so a refresh never builds it.
+-- filetypes adds to markdown and never replaces it.
+local function filetype_set(names)
+	local set = { markdown = true }
+	for _, name in ipairs(names) do
+		set[name] = true
+	end
+	return set
+end
+
 function M.setup(opts)
-	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+	opts = opts or {}
+	-- Judged before anything is applied, so a refused call changes nothing.
+	if opts.filetypes ~= nil and not is_filetype_list(opts.filetypes) then
+		vim.notify(
+			'mdkite: filetypes takes a list of filetype names, such as { "quarto" }; setup changed nothing',
+			vim.log.levels.ERROR
+		)
+		return
+	end
+	M.config = vim.tbl_deep_extend("force", M.config, opts)
 	M.config.bottom_padding = math.max(0, math.min(1, M.config.bottom_padding))
 	M._mmdr_available = nil -- reset so next check re-probes
+	M._filetype_set = filetype_set(M.config.filetypes)
 end
 
 -- Internal state
@@ -162,6 +203,7 @@ M._takeover_port = nil -- port of primary server (secondary uses for HTTP events
 M._token = nil -- kitehost auth token (primary owns; secondaries read from lockfile)
 M._bound_host = nil -- the address the primary's server bound, as kitehost reports it
 M._lock_owned = nil -- true once this instance writes the takeover lock
+M._filetype_set = filetype_set(M.config.filetypes) -- the filetypes previewed whole; setup rebuilds it
 
 local function effective_port()
 	if M.config.port ~= 0 then
@@ -416,8 +458,24 @@ end
 -- Content writing (unified: markdown or mermaid)
 ---------------------------------------------------------------------------
 
+-- Neovim reads a dotted filetype as each of its parts in turn (rzk.markdown
+-- is rzk, then markdown), so a literate file whose filetype has a markdown
+-- part previews whole with no config, as does a part filetypes names; the
+-- whole name is read first for an entry that is itself dotted.
+local function previews_whole(ft)
+	if M._filetype_set[ft] then
+		return true
+	end
+	for part in ft:gmatch("[^.]+") do
+		if M._filetype_set[part] then
+			return true
+		end
+	end
+	return false
+end
+
 ---Get the content to write based on filetype.
----Markdown buffers: entire buffer.
+---Markdown buffers (a markdown part counts): entire buffer.
 ---Mermaid files (.mmd, .mermaid): entire buffer wrapped in mermaid fence.
 ---Others: mermaid block under cursor wrapped in fence.
 ---@param bufnr integer
@@ -425,7 +483,7 @@ end
 local function get_content(bufnr)
 	local text
 	local ft = vim.bo[bufnr].filetype
-	if ft == "markdown" then
+	if previews_whole(ft) then
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		text = table.concat(lines, "\n")
 	elseif vim.api.nvim_buf_get_name(bufnr):match("%.mmd$") or vim.api.nvim_buf_get_name(bufnr):match("%.mermaid$") then

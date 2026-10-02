@@ -4,6 +4,11 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Added
+
+- A buffer whose filetype is dotted with a `markdown` part, such as `rzk.markdown` for a literate file, previews whole as Markdown with no config, since Neovim reads a dotted filetype as each of its parts in turn; before, only the filetype `markdown` did. Thanks @ddxtanx (#32).
+- `filetypes` option: filetypes with no `markdown` part, such as `{ "quarto", "rmd" }`, preview whole as Markdown too. The list adds to `markdown` and never replaces it. A value that is not a list of filetype names is refused by `setup()` with one error, `mdkite: filetypes takes a list of filetype names, such as { "quarto" }; setup changed nothing`, and that call applies nothing. Thanks @ddxtanx (#32).
+
 ## [2.0.0] - 2026-10-02
 
 ### Upgrading from markdown-preview.nvim
