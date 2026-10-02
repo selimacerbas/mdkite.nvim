@@ -4,6 +4,8 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-02
+
 ### Added
 
 - A buffer whose filetype is dotted with a `markdown` part, such as `rzk.markdown` for a literate file, previews whole as Markdown with no config, since Neovim reads a dotted filetype as each of its parts in turn; before, only the filetype `markdown` did. Thanks @ddxtanx (#32).
@@ -273,7 +275,8 @@ Complete rewrite from `mermaid-playground.nvim` to `markdown-preview.nvim`.
 }
 ```
 
-[Unreleased]: https://github.com/selimacerbas/mdkite.nvim/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/selimacerbas/mdkite.nvim/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/selimacerbas/mdkite.nvim/releases/tag/v2.1.0
 [2.0.0]: https://github.com/selimacerbas/mdkite.nvim/releases/tag/v2.0.0
 [1.10.0]: https://github.com/selimacerbas/markdown-preview.nvim/releases/tag/v1.10.0
 [1.9.0]: https://github.com/selimacerbas/markdown-preview.nvim/releases/tag/v1.9.0
