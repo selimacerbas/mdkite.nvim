@@ -6,6 +6,7 @@ Live **Markdown preview** for Neovim with first-class **Mermaid diagram** suppor
 
 - Renders your entire `.md` file in the browser: headings, tables, code blocks, everything
 - **Relative images work**: `![](pic.png)` next to your `.md` file renders in the preview
+- **Relative links work**: `[guide](usage.md)` opens the linked `.md` rendered in a new tab; other source files open as a highlighted code block
 - **Mermaid diagrams** render inline as interactive SVGs (click to expand, zoom, pan, export)
 - **Instant updates** via Server-Sent Events (no polling) with **scroll sync**: browser follows your cursor
 - **LaTeX math**: inline `$...$` and display `$$...$$` rendered via KaTeX
@@ -121,6 +122,7 @@ The preview opens a polished browser app with:
   - Click to open a **fullscreen overlay** with zoom, pan, fit-to-width/height, and SVG export
 - **Dark / Light theme** toggle (sun/moon icon in header)
 - **Live connection indicator**: green dot when SSE is connected
+- **Filename in the header**: the previewed file's path (relative to your working directory) shows centered in the top bar, updating live when you switch buffers
 - **Per-diagram error handling**: if one mermaid block is invalid, only that block shows an error; the rest of the page renders fine
 - **LaTeX math rendering**: `$E = mc^2$` inline and `$$\int_0^\infty$$` display math via KaTeX, plus `\begin{equation}` environments
 - **Scroll sync**: browser follows your cursor position with line-level precision
@@ -337,6 +339,11 @@ Browser-side libraries are loaded from CDN (cached by your browser):
 **Images don't show**
 - Relative paths (`pic.png`, `images/pic.png`) are served from the directory of the file being previewed, via a token-gated asset route. Paths that resolve *outside* that directory (e.g. `../shared/pic.png`) are rejected for containment; keep referenced images at or below the markdown file's directory.
 - Absolute filesystem paths (`/home/me/pic.png`) are not supported; http(s) URLs load as usual.
+
+**Relative links 404 or download**
+- `[guide](usage.md)` and similar relative links open in a **new tab**, served from the previewed file's directory via the same token-gated asset route as images. The live preview tab stays bound to your current buffer.
+- `.md` / `.markdown` / `.mdx` links **render** in the new tab (same pipeline as the preview: code blocks, tables, KaTeX, Mermaid). Other source files (`.lua`, `.c`, `.py`, `.txt`, ...) open as a **single syntax-highlighted code block** with a copy button, which also avoids the download an unknown MIME type triggers. Images and other media open directly via the asset route. `http(s)` links and in-page `#anchor` links are untouched.
+- The linked doc is a one-shot render: it does **not** live-update when you edit, and relative images inside it resolve against the original file's directory (the containment rule above).
 
 **Browser shows nothing or "Loading..."**
 - Make sure `kitehost.nvim` v2.0.0 or newer is installed and loadable: `:lua require("kitehost")`

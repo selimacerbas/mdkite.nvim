@@ -2,7 +2,10 @@
 -- End-to-end check that the plugin generates a token, threads it into the
 -- served HTML and gates content.md, that the lockfile holding it is
 -- private, and (Section 6) that the preview URL names the address the
--- server bound and carries the token on any bind but 127.0.0.1. The suite
+-- server bound and carries the token on any bind but 127.0.0.1. Section 2b
+-- checks the index's baked source path: it names the previewed file, and a
+-- retarget to one with HTML-special bytes in its name rewrites the
+-- persisted index with the path escaped. The suite
 -- drives require("mdkite").start() directly, not the
 -- :MdKite user command.
 --
@@ -129,6 +132,40 @@ vim.wait(200, function()
 end)
 r = http_get(("http://127.0.0.1:%d/"):format(port))
 eq(r.curl_exit, 7, "the port refuses connections after stop")
+
+H.section("Section 2b: the baked source path")
+-- The index bakes the previewed file's display path for the header, and a
+-- path with HTML-special bytes is escaped inside the attribute. A fixed
+-- workspace_dir makes the second start a retarget of the same directory,
+-- where overwrite_index_on_start = false leaves the persisted index to the
+-- staleness check, which must rewrite it for the new path.
+mp.setup({
+	open_browser = false,
+	instance_mode = "multi",
+	workspace_dir = vim.fs.joinpath(tmpdir, "ws"),
+	overwrite_index_on_start = false,
+})
+mp.start()
+local r2b = http_get(("http://127.0.0.1:%d/"):format(mp._server_instance.port))
+ok(r2b.body:find('data-source-path="test.md"', 1, true) ~= nil, "the served index names the previewed file")
+mp.stop()
+
+local weird = vim.fs.joinpath(tmpdir, "we&ird.md")
+H.write_file(weird, "# weird\n")
+vim.cmd("edit " .. vim.fn.fnameescape(weird))
+vim.bo.filetype = "markdown"
+mp.start()
+local r2c = http_get(("http://127.0.0.1:%d/"):format(mp._server_instance.port))
+ok(
+	r2c.body:find('data-source-path="test.md"', 1, true) == nil,
+	"the staleness check rewrote the persisted index for the new file"
+)
+ok(
+	r2c.body:find('data-source-path="we&amp;ird.md"', 1, true) ~= nil,
+	"the baked path escapes the ampersand in the attribute"
+)
+mp.stop()
+vim.cmd("edit " .. vim.fn.fnameescape(mdfile))
 
 H.section("Section 3: the lockfile keeps the token private")
 -- The lockfile carries the session token and the README promises 0600, but

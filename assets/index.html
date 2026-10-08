@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="__THEME__" data-bottom-padding="__BOTTOM_PADDING__" data-mermaid-elk="__MERMAID_ELK__" data-live-token="__LIVE_TOKEN__" data-yaml-mode="__YAML_MODE__" data-allow-html="__ALLOW_HTML__">
+<html lang="en" data-theme="__THEME__" data-bottom-padding="__BOTTOM_PADDING__" data-mermaid-elk="__MERMAID_ELK__" data-live-token="__LIVE_TOKEN__" data-yaml-mode="__YAML_MODE__" data-allow-html="__ALLOW_HTML__" data-source-path="__SOURCE_PATH__">
 
 <head>
     <meta charset="utf-8" />
@@ -139,6 +139,37 @@
             display: flex;
             align-items: center;
             color: var(--fg-muted);
+        }
+
+        /* Previewed file's name, centered in the sticky header; hidden
+           until a name is set. */
+        #header-path {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 50%;
+            display: none;
+            align-items: center;
+            gap: .4rem;
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+            font-size: .95rem;
+            color: var(--fg);
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            pointer-events: none;
+        }
+
+        #header-path .header-path-icon {
+            display: flex;
+            align-items: center;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+
+        #header-path .header-path-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .spacer {
@@ -821,6 +852,15 @@
             </svg>
         </span>
         <h1>mdkite</h1>
+        <div id="header-path" title="">
+            <span class="header-path-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M14 3v4a1 1 0 0 0 1 1h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+            </span>
+            <span class="header-path-text"></span>
+        </div>
         <div class="spacer"></div>
         <div id="statusDot" class="status-dot" title="Disconnected"></div>
         <span id="status" aria-live="polite"></span>
@@ -901,6 +941,22 @@
         const themeBtn = $('themeBtn');
         const statusDot = $('statusDot');
         const loadingSkeleton = $('loadingSkeleton');
+        const headerPath = $('header-path');
+        const headerPathText = headerPath && headerPath.querySelector('.header-path-text');
+
+        // Set the centered header filename. Used by render mode (linked
+        // file) and by the 'source' SSE event (live preview).
+        function setHeaderPath(p) {
+            if (!headerPath || !headerPathText) return;
+            if (!p) {
+                headerPath.style.display = 'none';
+                headerPath.title = '';
+                return;
+            }
+            headerPathText.textContent = p;
+            headerPath.title = p;
+            headerPath.style.display = 'flex';
+        }
 
         // Overlay refs
         const overlay = $('overlay');
@@ -1233,6 +1289,32 @@
             });
         }
 
+        // Same for relative links ([label](file.md)). The target lives next
+        // to the source markdown, not in the served workspace, so a bare
+        // href 404s: route .md/.markdown/.mdx to a one-shot render, other
+        // source files to a rendered code view (the asset route alone would
+        // download them, as an unknown MIME is served as octet-stream), and
+        // media straight to the asset route. Scheme/absolute/anchor links
+        // are left alone, as in rewriteRelativeImages.
+        function isMarkdownPath(p) {
+            return /\.(?:md|markdown|mdx)(?:\?.*)?$/i.test(p);
+        }
+        function isMediaPath(p) {
+            return /\.(?:png|jpe?g|gif|svg|ico|webp|avif|bmp)(?:\?.*)?$/i.test(p);
+        }
+        function rewriteRelativeLinks(rootEl) {
+            rootEl.querySelectorAll('a[href]').forEach(a => {
+                const href = a.getAttribute('href');
+                if (!href || /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/|\/|#)/.test(href)) return;
+                const url = isMediaPath(href)
+                    ? withToken('/__live/asset?p=' + encodeURIComponent(href))
+                    : withToken('/?render=' + encodeURIComponent(href) + '&mode=' + (isMarkdownPath(href) ? 'md' : 'code'));
+                a.setAttribute('href', url);
+                a.setAttribute('target', '_blank');
+                a.setAttribute('rel', 'noopener');
+            });
+        }
+
         function attachCopyButtons() {
             contentEl.querySelectorAll('.code-wrap').forEach(wrap => {
                 if (wrap.querySelector('.copy-btn')) return;
@@ -1301,6 +1383,7 @@
                     wrapper.id = 'content';
                     wrapper.innerHTML = html;
                     rewriteRelativeImages(wrapper);
+                    rewriteRelativeLinks(wrapper);
 
                     window.morphdom(contentEl, wrapper, {
                         childrenOnly: false,
@@ -1327,6 +1410,7 @@
                 } else {
                     contentEl.innerHTML = html;
                     rewriteRelativeImages(contentEl);
+                    rewriteRelativeLinks(contentEl);
                 }
                 applyBottomPadding();
 
@@ -1402,6 +1486,14 @@
             const evtSource = new EventSource(withToken('/__live/events'));
             evtSource.addEventListener('reload', async () => {
                 await sync(false);
+            });
+            // Source filename for the live preview (start and buffer-switch
+            // retargets). Drives the centered header.
+            evtSource.addEventListener('source', (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    setHeaderPath(data.path || '');
+                } catch (_) {}
             });
             evtSource.addEventListener('scroll', (event) => {
                 if (scrollSyncPaused) return;
@@ -1565,6 +1657,87 @@
         }
         window.addEventListener('resize', applyBottomPadding);
 
+        // ── Render mode: open a linked file in a new tab ──────────────
+        // With ?render=<path> this page acts as a one-shot renderer for
+        // that file: fetch it through the asset route (resolved against
+        // the source file's dir) and render it, with no SSE and no buffer
+        // binding. mode "md" renders as Markdown, "code" as one
+        // syntax-highlighted code block.
+        async function renderLinkedDoc(path, mode) {
+            document.title = path.split('/').pop() || 'mdkite';
+            if (statusDot) statusDot.style.display = 'none';
+            if (statusEl) statusEl.style.display = 'none';
+            setHeaderPath(path);
+            showContent();
+            contentEl.innerHTML = '<p style="color:var(--fg-muted)">Loading ' +
+                md.utils.escapeHtml(path) + '...</p>';
+            let resp;
+            try {
+                resp = await fetch(withToken('/__live/asset?p=' + encodeURIComponent(path)), { cache: 'no-store' });
+            } catch (e) {
+                contentEl.innerHTML = '<p style="color:var(--err-fg)">Could not load ' +
+                    md.utils.escapeHtml(path) + ': ' + md.utils.escapeHtml(String(e.message || e)) + '</p>';
+                return;
+            }
+            if (!resp.ok) {
+                contentEl.innerHTML = '<p style="color:var(--err-fg)">' + resp.status + ' ' +
+                    md.utils.escapeHtml(resp.statusText || 'error') + ': ' +
+                    md.utils.escapeHtml(path) + '</p>';
+                return;
+            }
+            const text = (await resp.text()).replace(/\r\n?/g, '\n');
+            try {
+                if (mode === 'code') {
+                    contentEl.innerHTML = renderCodeFile(path, text);
+                } else {
+                    capturedFrontMatter = null;
+                    const html = md.render(text);
+                    contentEl.innerHTML = html;
+                    rewriteRelativeImages(contentEl);
+                    rewriteRelativeLinks(contentEl);
+                    updateFrontMatterPanel();
+
+                    const blocks = contentEl.querySelectorAll('.mermaid-block[data-mermaid-source]:not(.mermaid-rendered)');
+                    for (const block of blocks) {
+                        await renderMermaidBlock(block);
+                    }
+                }
+                applyBottomPadding();
+                attachCopyButtons();
+            } catch (e) {
+                console.error('[mdkite] render error:', e);
+                contentEl.innerHTML = '<pre style="white-space:pre-wrap;padding:1rem">' +
+                    text.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>';
+            }
+        }
+
+        // Render a non-markdown source file as one highlighted code block,
+        // reusing the .code-wrap markup the fence renderer emits so copy
+        // buttons and the language badge work unchanged. The language comes
+        // from the extension, falling back to hljs auto-detect, then plain
+        // escaped text.
+        function renderCodeFile(path, text) {
+            const ext = (path.match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+            const lang = ext.toLowerCase();
+            let highlighted;
+            if (window.hljs) {
+                try {
+                    if (lang && window.hljs.getLanguage(lang)) {
+                        highlighted = window.hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+                    } else {
+                        highlighted = window.hljs.highlightAuto(text).value;
+                    }
+                } catch (_) {
+                    highlighted = md.utils.escapeHtml(text);
+                }
+            } else {
+                highlighted = md.utils.escapeHtml(text);
+            }
+            const label = md.utils.escapeHtml(lang || 'text');
+            return '<div class="code-wrap"><span class="code-lang">' + label + '</span>' +
+                '<pre class="hljs" data-lang="' + label + '"><code>' + highlighted + '</code></pre></div>';
+        }
+
         // ── Boot ──────────────────────────────────────────────────────
         (async function boot() {
             try {
@@ -1573,6 +1746,23 @@
                     mermaid.registerLayoutLoaders(elkLayouts.default || elkLayouts);
                 }
                 applyTheme(currentTheme);
+
+                // Render mode (?render=<path>&mode=md|code): one-shot
+                // render of a linked file in this tab. The return skips
+                // connectSSE() below: no live preview in this tab.
+                const params = new URLSearchParams(location.search);
+                const renderPath = params.get('render');
+                if (renderPath) {
+                    await renderLinkedDoc(renderPath, params.get('mode'));
+                    return;
+                }
+
+                // Live preview: show the baked source path on first paint,
+                // before SSE connects; the 'source' event updates it on
+                // retarget (buffer switch).
+                const bakedPath = document.documentElement.dataset.sourcePath || '';
+                if (bakedPath && bakedPath !== '__SOURCE_PATH__') setHeaderPath(bakedPath);
+
                 await sync(true);
             } catch (e) {
                 console.error('[mdkite] boot error:', e);

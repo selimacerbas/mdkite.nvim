@@ -195,6 +195,7 @@ M._augroup = nil
 M._last_text_by_buf = {}
 M._server_instance = nil
 M._debounce_seq = 0
+M._start_seq = 0 -- bumped by every start; a stale deferred push is dropped
 M._workspace_dir = nil
 M._mmdr_available = nil -- nil = unchecked, true/false after probe
 M._last_scroll_line = nil
@@ -219,6 +220,12 @@ local function is_loopback(host)
 	return host == "127.0.0.1" or host == "localhost"
 end
 
+-- Escape a value that lands inside a double-quoted HTML attribute; the
+-- ampersand goes first so the entities it makes are not escaped again.
+local function escape_attr(s)
+	return (s:gsub("&", "&amp;"):gsub('"', "&quot;"):gsub("<", "&lt;"))
+end
+
 ---------------------------------------------------------------------------
 -- Workspace
 ---------------------------------------------------------------------------
@@ -240,7 +247,7 @@ end
 -- Index HTML
 ---------------------------------------------------------------------------
 
-local function write_index(dir)
+local function write_index(dir, source_path)
 	local dst = vim.fs.joinpath(dir, M.config.index_name)
 	local src = util.resolve_asset("assets/index.html")
 	if not src then
@@ -277,6 +284,11 @@ local function write_index(dir)
 		end
 		return m
 	end)
+	-- Bake the source path so the header shows a name on first paint,
+	-- before SSE connects; escaped because it lands in an attribute.
+	content = content:gsub('data%-source%-path="__SOURCE_PATH__"', function()
+		return 'data-source-path="' .. escape_attr(source_path or "") .. '"'
+	end)
 
 	-- Inline custom CSS after the bundled styles so user rules win the cascade.
 	if M.config.custom_css and M.config.custom_css ~= "" then
@@ -295,22 +307,22 @@ local function write_index(dir)
 	return dst
 end
 
-local function write_index_if_needed(dir)
+local function write_index_if_needed(dir, source_path)
 	if M.config.overwrite_index_on_start then
-		return write_index(dir)
+		return write_index(dir, source_path)
 	end
 	local dst = vim.fs.joinpath(dir, M.config.index_name)
 	if not util.file_exists(dst) then
-		return write_index(dir)
+		return write_index(dir, source_path)
 	end
-	-- Rewrite a persisted index whose baked token no longer matches what this
-	-- session serves. Covers a fresh token after restart AND a loopback<->
-	-- network switch (which flips whether the token is baked at all): a stale
-	-- non-empty token on a network bind would otherwise 401 every request.
-	local want = 'data-live-token="' .. (is_loopback(M._bound_host) and (M._token or "") or "") .. '"'
+	-- Rewrite a persisted index whose baked token or source path is stale:
+	-- a fresh token after restart, a loopback<->network switch (which flips
+	-- whether the token is baked at all), or a buffer switch (new path).
+	local want_token = 'data-live-token="' .. (is_loopback(M._bound_host) and (M._token or "") or "") .. '"'
+	local want_path = 'data-source-path="' .. escape_attr(source_path or "") .. '"'
 	local ok, existing = pcall(util.read_text, dst)
-	if not ok or not existing:find(want, 1, true) then
-		return write_index(dir)
+	if not ok or not existing:find(want_token, 1, true) or not existing:find(want_path, 1, true) then
+		return write_index(dir, source_path)
 	end
 	return dst
 end
@@ -635,6 +647,74 @@ local function send_scroll_sync(bufnr)
 	end
 end
 
+--- Display path for the header: relative to the cwd when the file is
+--- under it, else the basename. Returns "" for unnamed buffers.
+local function source_display_path(bufnr)
+	local name = vim.api.nvim_buf_get_name(bufnr)
+	if not name or name == "" then
+		return ""
+	end
+	local cwd = vim.fn.getcwd()
+	-- Compare both absolute, so a relative cwd cannot slip through.
+	local abs_name = vim.fn.fnamemodify(name, ":p")
+	local abs_cwd = vim.fn.fnamemodify(cwd, ":p")
+	if abs_name:sub(1, #abs_cwd) == abs_cwd then
+		local rel = abs_name:sub(#abs_cwd + 1)
+		if rel ~= "" then
+			return rel
+		end
+	end
+	-- Outside the cwd: basename rather than a long absolute path.
+	local base = vim.fn.fnamemodify(name, ":t")
+	return base ~= "" and base or name
+end
+
+--- Push the source path to the browser header; the baked attribute
+--- covers first paint, this covers live buffer switches. A quiet push
+--- reports no failure: the join uses one, where a dead or refusing
+--- primary is already told once by the scroll pushes.
+local function send_source(bufnr, quiet)
+	local path = source_display_path(bufnr)
+	if path == "" then
+		return
+	end
+	local payload = vim.json.encode({ path = path })
+	if M._server_instance then
+		local pushed, err = pcall(server.send_event, M._server_instance, "source", payload)
+		if not quiet then
+			report_push("sync the source name", pushed, err)
+		end
+	elseif M._takeover_port then
+		local port = M._takeover_port
+		require("mdkite.remote").send_event(port, "source", payload, M._token, function(sent, cause)
+			if sent or quiet then
+				return
+			end
+			vim.schedule(function()
+				report_remote("sync the source name", port, cause)
+			end)
+		end)
+	end
+end
+
+-- A fresh start's source push, deferred until the browser likely connected.
+-- Tracked so a stop drops it instead of leaving a timer to fire into a
+-- later session.
+local source_timer = nil
+
+local function push_source_later(bufnr)
+	if source_timer and not source_timer:is_closing() then
+		source_timer:close()
+	end
+	local seq = M._start_seq
+	source_timer = vim.defer_fn(function()
+		source_timer = nil
+		if seq == M._start_seq and vim.api.nvim_buf_is_valid(bufnr) then
+			send_source(bufnr)
+		end
+	end, 400)
+end
+
 ---------------------------------------------------------------------------
 -- Autocmds
 ---------------------------------------------------------------------------
@@ -757,6 +837,12 @@ end
 
 -- Shared by a stop and every failed start; the lock goes only when this instance wrote it.
 local function forget_session()
+	if source_timer then
+		if not source_timer:is_closing() then
+			source_timer:close()
+		end
+		source_timer = nil
+	end
 	if M._augroup then
 		pcall(vim.api.nvim_del_augroup_by_id, M._augroup)
 		M._augroup = nil
@@ -785,6 +871,7 @@ local function abandon(inst)
 end
 
 function M.start()
+	M._start_seq = M._start_seq + 1
 	-- The two plugins update apart, so an older server is refused before
 	-- any state is made, naming the release this one needs.
 	if not find_server() then
@@ -882,6 +969,12 @@ function M.start()
 				set_autocmds_for_buffer(bufnr)
 				write_content(dir, text, bufnr)
 				M._last_text_by_buf[bufnr] = text
+				local seq = M._start_seq
+				vim.schedule(function()
+					if seq == M._start_seq then
+						send_source(bufnr, true)
+					end
+				end)
 				if type(M.config.hooks.on_start) == "function" then
 					M.config.hooks.on_start(browser_url("127.0.0.1", lock_data.port, lock_data.host))
 				end
@@ -909,7 +1002,7 @@ function M.start()
 
 	-- A fresh start may share its workspace with another instance's server, so nothing is written before one answers.
 	local function publish()
-		write_index_if_needed(dir)
+		write_index_if_needed(dir, source_display_path(bufnr))
 		write_content(dir, text, bufnr)
 		M._last_text_by_buf[bufnr] = text
 	end
@@ -1019,6 +1112,10 @@ function M.start()
 		if M.config.open_browser then
 			open_later(url)
 		end
+
+		-- The browser has not connected to SSE yet on a fresh start, so
+		-- defer the source event until it likely has.
+		push_source_later(bufnr)
 	else
 		-- Server already running, retarget to this buffer's workspace
 		local index_path = vim.fs.joinpath(dir, M.config.index_name)
@@ -1081,6 +1178,9 @@ function M.start()
 		if M.config.open_browser and server.connected_client_count(inst) == 0 then
 			open_later(url)
 		end
+
+		-- The browser is already connected on a retarget: send now.
+		send_source(bufnr)
 	end
 end
 

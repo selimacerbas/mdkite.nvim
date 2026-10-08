@@ -4,6 +4,11 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Added
+
+- Relative links in the preview open in a new tab instead of 404ing: `.md`/`.markdown`/`.mdx` targets render with the full pipeline (code blocks, tables, KaTeX, Mermaid), other source files open as one syntax-highlighted code block with a copy button, and images and other media open through the asset route. The linked page is a one-shot render, so it does not live-update with edits. `http(s)`, root-absolute and `#anchor` links are untouched.
+- The previewed file's name shows centered in the header, baked into the page for the first paint and updated live over a `source` event when a retarget or a takeover secondary switches the previewed buffer.
+
 ## [2.1.0] - 2026-10-02
 
 ### Added
