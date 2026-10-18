@@ -109,11 +109,12 @@ M.config = {
 	notify_on_refresh = false,
 
 	-- "js" = browser-side mermaid.js (default, zero deps)
+	-- "pele" = browser-side pele (obsidianmd/pele): smaller and synchronous, with its own layout
 	-- "rust" = pre-render via mermaid-rs-renderer (mmdr) CLI (~400x faster)
 	mermaid_renderer = "js",
 
 	-- Load ELK layout engine for mermaid diagrams (requires internet; adds ~800 KB).
-	-- Enables %%{init: {"layout": "elk"}}%% in diagrams.
+	-- Enables %%{init: {"layout": "elk"}}%% in diagrams. mermaid.js only: pele has its own layout.
 	mermaid_elk = false,
 
 	scroll_sync = true, -- sync browser scroll to cursor position
@@ -255,6 +256,10 @@ local function write_index(dir)
 	end)
 	content = content:gsub("__MERMAID_ELK__", function()
 		return M.config.mermaid_elk and "true" or "false"
+	end)
+	-- "rust" falls back to mermaid.js in the browser for blocks mmdr could not render.
+	content = content:gsub("__MERMAID_RENDERER__", function()
+		return M.config.mermaid_renderer == "pele" and "pele" or "js"
 	end)
 	-- Anchor to the attribute: index.html also contains the bare placeholder
 	-- as a JS sentinel, and substituting that too breaks auth (issue #31).

@@ -4,6 +4,14 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Added
+
+- `mermaid_renderer = "pele"` renders mermaid diagrams in the browser with [pele](https://github.com/obsidianmd/pele) 1.6.0 instead of mermaid.js. The default stays `"js"`, so nothing changes unless it is set. Pele uses its own layout and style, takes its colors from the page theme (a theme switch recolors diagrams without a re-render), and has no ELK or `%%{init}%%` theme variables; Iconify packs still load, with the icon markup sanitized before pele inserts it. SVG export bakes the current theme colors into a pele diagram's file.
+
+### Fixed
+
+- Zooming a diagram in the fullscreen overlay no longer strips the SVG root's inline style, which pele needs for its colors.
+
 ## [2.1.0] - 2026-10-02
 
 ### Added

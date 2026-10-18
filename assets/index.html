@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="__THEME__" data-bottom-padding="__BOTTOM_PADDING__" data-mermaid-elk="__MERMAID_ELK__" data-live-token="__LIVE_TOKEN__" data-yaml-mode="__YAML_MODE__" data-allow-html="__ALLOW_HTML__">
+<html lang="en" data-theme="__THEME__" data-bottom-padding="__BOTTOM_PADDING__" data-mermaid-elk="__MERMAID_ELK__" data-mermaid-renderer="__MERMAID_RENDERER__" data-live-token="__LIVE_TOKEN__" data-yaml-mode="__YAML_MODE__" data-allow-html="__ALLOW_HTML__">
 
 <head>
     <meta charset="utf-8" />
@@ -51,6 +51,23 @@
             --color-h4: #39d2c0;
             --color-h5: #d29922;
             --color-h6: #8b949e;
+        }
+
+        /* pele reads these from any ancestor of the diagram, so a theme switch
+           recolors diagrams without a re-render. They sit on :root so the
+           fullscreen overlay inherits them too. */
+        :root {
+            --pele-bg: var(--panel);
+            --pele-fg: var(--fg);
+            --pele-muted: var(--fg-muted);
+            --pele-line: var(--fg-muted);
+            --pele-surface: var(--code-bg);
+            --pele-surface-alt: var(--stroke);
+            --pele-border: var(--stroke);
+            --pele-accent: var(--accent);
+            --pele-error: var(--color-caution);
+            --pele-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+            --pele-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         }
 
         [data-theme="light"] {
@@ -889,10 +906,14 @@
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-texmath@1.0.0/texmath.js"></script>
 
     <script type="module">
-        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
         import markdownItGithubAlerts from 'https://unpkg.com/markdown-it-github-alerts@1.0.1/dist/index.mjs';
 
         const BOTTOM_PADDING = parseFloat(document.documentElement.dataset.bottomPadding) || 0.5;
+        // Which engine renders mermaid fences in the browser; the one engine is
+        // imported in boot, so the other is never fetched.
+        const RENDERER = document.documentElement.dataset.mermaidRenderer === 'pele' ? 'pele' : 'js';
+        let mermaid = null;
+        let peleRender = null;
 
         // ── DOM refs ──────────────────────────────────────────────────
         const $ = (id) => document.getElementById(id);
@@ -1003,16 +1024,19 @@
                     ? 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark.min.css'
                     : 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github.min.css';
             }
-            mermaid.initialize({
-                startOnLoad: false,
-                theme: theme === 'dark' ? 'dark' : 'default',
-                securityLevel: 'strict',
-            });
+            // pele reads its colors from CSS variables, so only mermaid.js needs a re-theme
+            if (mermaid) {
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: theme === 'dark' ? 'dark' : 'default',
+                    securityLevel: 'strict',
+                });
+            }
         }
 
         themeBtn.addEventListener('click', () => {
             applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
-            renderAllMermaidBlocks();
+            if (mermaid) renderAllMermaidBlocks();
         });
 
         // ── Markdown-it setup ─────────────────────────────────────────
@@ -1150,7 +1174,7 @@
             return `<div class="code-wrap">${badge}${html}</div>`;
         };
 
-        // ── Iconify auto-detection ────────────────────────────────────
+        // ── Iconify auto-detection (mermaid.js) ───────────────────────
         function detectPacks(src) {
             const re = /\b([a-z0-9-]+):[a-z0-9-]+\b/gi;
             const s = new Set();
@@ -1168,6 +1192,67 @@
             } catch (_) { }
         }
 
+        // ── Iconify icons (pele) ──────────────────────────────────────
+        // pele's icons() callback is sync, so packs are fetched before the
+        // render and read from packData. A failed fetch is remembered, so a
+        // bad pack name is not refetched on every refresh.
+        const packFetches = new Map();
+        const packData = new Map();
+
+        // Pack names in icon position: architecture `(pack:name)` and flowchart `icon: "pack:name"`.
+        function peleDetectPacks(src) {
+            const s = new Set();
+            for (const re of [/\(\s*([a-z0-9-]+):[a-z0-9-]+\s*\)/g, /\bicon\s*:\s*["']([a-z0-9-]+):[a-z0-9-]+["']/g]) {
+                let m;
+                while ((m = re.exec(src))) s.add(m[1]);
+            }
+            return [...s];
+        }
+
+        function peleEnsurePack(name) {
+            if (!packFetches.has(name)) {
+                packFetches.set(name, fetch(`https://unpkg.com/@iconify-json/${name}@1/icons.json`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => { if (d && d.icons) packData.set(name, d); })
+                    .catch(() => { }));
+            }
+            return packFetches.get(name);
+        }
+
+        // pele inserts what icons() returns unfiltered, and pack JSON is third-party:
+        // rebuild the icon as an SVG document and drop scripts, handlers and external refs.
+        function sanitizeIcon(markup) {
+            const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+            if (doc.querySelector('parsererror')) return null;
+            doc.querySelectorAll('script, foreignObject, style, iframe, object, embed').forEach(n => n.remove());
+            doc.querySelectorAll('*').forEach(n => {
+                for (const a of [...n.attributes]) {
+                    const v = a.value.trim().toLowerCase();
+                    const isRef = a.name === 'href' || a.name === 'xlink:href';
+                    if (a.name.startsWith('on') || (isRef && !v.startsWith('#')) || v.startsWith('javascript:')) {
+                        n.removeAttribute(a.name);
+                    }
+                }
+            });
+            return new XMLSerializer().serializeToString(doc.documentElement);
+        }
+
+        function peleIconFor(name) {
+            const i = name.indexOf(':');
+            const pack = i > 0 ? packData.get(name.slice(0, i)) : null;
+            if (!pack) return null;
+            const key = name.slice(i + 1);
+            let icon = pack.icons[key];
+            if (!icon && pack.aliases && pack.aliases[key]) {
+                const alias = pack.aliases[key];
+                icon = { ...pack.icons[alias.parent], ...alias };
+            }
+            if (!icon || typeof icon.body !== 'string') return null;
+            const w = icon.width || pack.width || 16;
+            const h = icon.height || pack.height || 16;
+            return sanitizeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${icon.body}</svg>`);
+        }
+
         // ── Mermaid rendering ─────────────────────────────────────────
         const lastGoodSvg = {};
 
@@ -1178,13 +1263,21 @@
             const wrap = block.querySelector('.mermaid-svg-wrap');
             if (!wrap) return;
 
-            const packs = detectPacks(source);
-            for (const p of packs) await ensurePack(p);
+            if (RENDERER === 'pele') {
+                await Promise.all(peleDetectPacks(source).map(peleEnsurePack));
+            } else {
+                for (const p of detectPacks(source)) await ensurePack(p);
+            }
 
             try {
-                mermaidIdCounter++;
-                const id = 'mmd-render-' + mermaidIdCounter;
-                const { svg } = await mermaid.render(id, source);
+                let svg;
+                if (RENDERER === 'pele') {
+                    ({ svg } = peleRender(source, { idPrefix: block.id, icons: peleIconFor }));
+                } else {
+                    mermaidIdCounter++;
+                    const id = 'mmd-render-' + mermaidIdCounter;
+                    ({ svg } = await mermaid.render(id, source));
+                }
 
                 wrap.innerHTML = svg;
                 block.classList.add('mermaid-rendered');
@@ -1204,11 +1297,16 @@
                     errEl.className = 'mermaid-error';
                     block.appendChild(errEl);
                 }
-                const msg = String(e?.message || e || 'Invalid diagram')
-                    .split('\n').find(Boolean) || 'Invalid diagram';
-                errEl.textContent = msg.replace(/\s*mermaid version\s*\d+(?:\.\d+)*\s*$/i, '').trim();
+                const lines = String(e?.message || e || 'Invalid diagram').split('\n');
+                if (RENDERER === 'pele') {
+                    // pele messages carry a caret line under the source; keep the text only
+                    errEl.textContent = lines.map(l => l.trim()).filter(l => l && l !== '^').join(' ') || 'Invalid diagram';
+                } else {
+                    const msg = lines.find(Boolean) || 'Invalid diagram';
+                    errEl.textContent = msg.replace(/\s*mermaid version\s*\d+(?:\.\d+)*\s*$/i, '').trim();
 
-                block.querySelectorAll('.error,.error-icon,.error-text,.errorText').forEach(n => n.remove());
+                    block.querySelectorAll('.error,.error-icon,.error-text,.errorText').forEach(n => n.remove());
+                }
             }
         }
 
@@ -1456,11 +1554,14 @@
         function applyOverlayZoom() {
             const svg = overlayPanzoomInner.querySelector('svg');
             if (!svg || !ovBaseW || !ovBaseH) return;
-            svg.removeAttribute('style');
-            svg.removeAttribute('width');
-            svg.removeAttribute('height');
-            svg.setAttribute('width', String(Math.max(1, Math.round(ovBaseW * ovZoom))));
-            svg.setAttribute('height', String(Math.max(1, Math.round(ovBaseH * ovZoom))));
+            // Keep the root's inline style: pele keeps its color variables there.
+            const w = Math.max(1, Math.round(ovBaseW * ovZoom));
+            const h = Math.max(1, Math.round(ovBaseH * ovZoom));
+            svg.style.maxWidth = 'none';
+            svg.style.width = w + 'px';
+            svg.style.height = h + 'px';
+            svg.setAttribute('width', String(w));
+            svg.setAttribute('height', String(h));
             ovZoomReset.textContent = Math.round(ovZoom * 100) + '%';
         }
 
@@ -1512,7 +1613,21 @@
         // Export SVG from overlay
         ovExport.addEventListener('click', () => {
             if (!ovSvgSource) return;
-            const blob = new Blob([ovSvgSource], { type: 'image/svg+xml' });
+            // pele colors come from --pele-* on the page; a saved file has no
+            // page, so bake the current values into the root's style.
+            let svgOut = ovSvgSource;
+            const live = overlayPanzoomInner.querySelector('svg');
+            if (live && live.classList.contains('pele')) {
+                const cs = getComputedStyle(live);
+                const baked = ['bg', 'fg', 'muted', 'line', 'surface', 'surface-alt', 'border', 'accent', 'critical', 'error',
+                    'font', 'font-mono', 'series-1', 'series-2', 'series-3', 'series-4', 'series-5', 'series-6', 'series-7', 'series-8']
+                    .map(k => [k, cs.getPropertyValue('--pele-' + k).trim()])
+                    .filter(([, v]) => v)
+                    .map(([k, v]) => `--pele-${k}:${v.replace(/"/g, "'")}`)
+                    .join(';');
+                svgOut = ovSvgSource.replace(/^(<svg\b[^>]*?\sstyle=")/, `$1${baked};`);
+            }
+            const blob = new Blob([svgOut], { type: 'image/svg+xml' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = 'diagram.svg';
@@ -1568,9 +1683,14 @@
         // ── Boot ──────────────────────────────────────────────────────
         (async function boot() {
             try {
-                if (document.documentElement.dataset.mermaidElk === 'true') {
-                    const elkLayouts = await import('https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.2.1/dist/mermaid-layout-elk.esm.min.mjs');
-                    mermaid.registerLayoutLoaders(elkLayouts.default || elkLayouts);
+                if (RENDERER === 'pele') {
+                    ({ render: peleRender } = await import('https://cdn.jsdelivr.net/npm/pele@1.6.0/dist/pele.js'));
+                } else {
+                    mermaid = (await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')).default;
+                    if (document.documentElement.dataset.mermaidElk === 'true') {
+                        const elkLayouts = await import('https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.2.1/dist/mermaid-layout-elk.esm.min.mjs');
+                        mermaid.registerLayoutLoaders(elkLayouts.default || elkLayouts);
+                    }
                 }
                 applyTheme(currentTheme);
                 await sync(true);

@@ -157,7 +157,7 @@ require("mdkite").setup({
   debounce_ms = 300,                    -- debounce interval
   notify_on_refresh = false,            -- show notification on refresh
 
-  mermaid_renderer = "js",              -- "js" (browser mermaid.js) or "rust" (mmdr CLI, ~400x faster)
+  mermaid_renderer = "js",              -- "js" (browser mermaid.js), "pele" (browser pele, ~100-500x faster) or "rust" (mmdr CLI, ~500-1000x faster)
 
   default_theme = "dark",               -- "dark" or "light"; initial preview theme (toggleable in browser)
 
@@ -288,6 +288,7 @@ SSE event --> Browser
 Rendered preview (scroll preserved, no flicker)
 ```
 
+- **pele renderer** (`mermaid_renderer = "pele"`): the browser renders mermaid fences with [pele](https://github.com/obsidianmd/pele) instead of mermaid.js. It is small, synchronous and takes its colors from the page theme, so a theme switch needs no re-render. It targets Mermaid 12.1.0 syntax with its own layout and style, so diagrams look different from mermaid.js. `mermaid_elk` and `%%{init}%%` theme variables have no effect with it; Iconify packs (`logos:aws`) still load.
 - **Rust renderer** (`mermaid_renderer = "rust"`): mermaid fences are pre-rendered to SVG via the `mmdr` CLI before writing to `content.md`. The browser receives ready-made SVGs with no mermaid.js overhead. Failed blocks fall back to browser-side rendering automatically.
 - **Markdown files** (filetype `markdown`, a dotted one with a `markdown` part, or one listed in `filetypes`): The entire buffer is written to `content.md`
 - **Mermaid files** (`.mmd`, `.mermaid`): The entire buffer is wrapped in a mermaid code fence
@@ -310,6 +311,7 @@ Browser-side libraries are loaded from CDN (cached by your browser):
 - [markdown-it](https://github.com/markdown-it/markdown-it): Markdown parser
 - [KaTeX](https://katex.org/) + [markdown-it-texmath](https://github.com/goessner/markdown-it-texmath): LaTeX math rendering
 - [Mermaid](https://mermaid.js.org/): diagram engine
+- [pele](https://github.com/obsidianmd/pele): alternative diagram renderer, loaded only with `mermaid_renderer = "pele"`
 - [highlight.js](https://highlightjs.org/): syntax highlighting
 - [morphdom](https://github.com/patrick-steele-idem/morphdom): DOM diffing
 

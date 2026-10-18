@@ -34,7 +34,7 @@ Neovim plugin for live markdown preview in the browser. Pure Lua, no npm: the pl
 - The browser renders with markdown-it, highlight.js, KaTeX and mermaid (loaded from CDNs) and diffs the DOM with morphdom.
 - Auth: a per-session token gates five surfaces, `content.md`, the `asset_root` sidecar, the SSE stream, the inject endpoint and the asset route; on a server bound to `127.0.0.1` (the default, and what `localhost` binds) the index page is not gated and carries the token (`data-live-token`), and on any other bound address, `::1` included, the index page is gated too and carries no token, which the browser takes from the `?t=` URL; the address the server bound decides, never a `host` set after the start.
 - Instance modes: `takeover` (the default; one shared workspace, port 8421 under the default `port = 0`, a lock file elects the primary) and `multi` (a per-buffer workspace, or `workspace_dir` when set, and a server per instance on an OS-assigned port under the default `port = 0`).
-- `mermaid_renderer = "rust"` pre-renders mermaid fences through the `mmdr` CLI; the default renders them in the browser.
+- `mermaid_renderer = "rust"` pre-renders mermaid fences through the `mmdr` CLI; the default (`"js"`) renders them in the browser with mermaid.js, and `"pele"` with pele (obsidianmd/pele, pinned in `assets/index.html`). The page imports only the chosen engine in `boot`; `write_index` bakes the choice as `data-mermaid-renderer` (`"pele"` or `"js"`, which `"rust"` maps to for blocks mmdr did not render). pele takes its colors from the `--pele-*` variables on `:root`, and the overlay's zoom must keep the SVG root's inline `style`, where pele keeps its internal color variables.
 
 ## Conventions
 
