@@ -159,6 +159,8 @@ require("mdkite").setup({
 
   mermaid_renderer = "js",              -- "js" (browser mermaid.js) or "rust" (mmdr CLI, ~400x faster)
 
+  mermaid_elk = false,                  -- register "elk" loader ("dagre" by default)
+
   default_theme = "dark",               -- "dark" or "light"; initial preview theme (toggleable in browser)
 
   yaml_mode = "panel",                  -- front matter: "panel" (collapsible above preview), "hide", or "raw"
