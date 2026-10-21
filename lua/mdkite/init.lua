@@ -598,6 +598,36 @@ local function report_remote(what, port, cause)
 	vim.notify(("mdkite: could not %s: %s"):format(what, tostring(cause)), vim.log.levels.WARN)
 end
 
+---------------------------------------------------------------------------
+-- Page title sync
+---------------------------------------------------------------------------
+
+--- Send page title to browser via SSE.
+---@param bufnr integer
+local function send_page_title(bufnr)
+	local title = build_page_title(bufnr)
+	if not title then
+		return
+	end
+	local payload = vim.json.encode({ title = title })
+	if M._server_instance then
+		report_push("send page title", pcall(server.send_event, M._server_instance, "title", payload))
+	elseif M._takeover_port then
+		local port = M._takeover_port
+		require("mdkite.remote").send_event(port, "title", payload, M._token, function(sent, cause)
+			if not sent then
+				vim.schedule(function()
+					report_remote("send page title", port, cause)
+				end)
+			end
+		end)
+	end
+end
+
+---------------------------------------------------------------------------
+-- Refresh logic
+---------------------------------------------------------------------------
+
 local function maybe_refresh(bufnr, silent)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -637,32 +667,6 @@ local function debounced_refresh(bufnr)
 		end
 		pcall(maybe_refresh, bufnr, true)
 	end, M.config.debounce_ms)
-end
-
----------------------------------------------------------------------------
--- Page title sync
----------------------------------------------------------------------------
-
---- Send page title to browser via SSE.
----@param bufnr integer
-local function send_page_title(bufnr)
-	local title = build_page_title(bufnr)
-	if not title then
-		return
-	end
-	local payload = vim.json.encode({ title = title })
-	if M._server_instance then
-		report_push("send page title", pcall(server.send_event, M._server_instance, "title", payload))
-	elseif M._takeover_port then
-		local port = M._takeover_port
-		require("mdkite.remote").send_event(port, "title", payload, M._token, function(sent, cause)
-			if not sent then
-				vim.schedule(function()
-					report_remote("send page title", port, cause)
-				end)
-			end
-		end)
-	end
 end
 
 ---------------------------------------------------------------------------
@@ -732,9 +736,6 @@ local function set_autocmds_for_buffer(bufnr)
 			desc = "mdkite scroll sync",
 		})
 	end
-
-	-- Send page title on initial connection and when buffer changes
-	-- Note: Initial title is sent from M.start() after browser connects
 end
 
 ---------------------------------------------------------------------------
