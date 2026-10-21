@@ -140,6 +140,12 @@ M.config = {
 	-- 0.5 = middle of viewport (default), 1.0 = bottom edge (no extra space)
 	bottom_padding = 0.5,
 
+	-- Browser tab title template. Supports placeholders:
+	-- ${name} = filename without path (e.g. "README.md")
+	-- ${path} = full file path
+	-- nil or "" = use default "mdkite"
+	page_title = "${name}",
+
 	hooks = {
 		-- fun(url: string)|nil: called after preview starts; receives the preview URL
 		on_start = nil,
@@ -518,6 +524,27 @@ local function get_content_safe(bufnr)
 	return nil
 end
 
+---------------------------------------------------------------------------
+-- Page title
+---------------------------------------------------------------------------
+
+--- Build the page title from the template and buffer name.
+---@param bufnr integer
+---@return string|nil
+local function build_page_title(bufnr)
+	local template = M.config.page_title
+	if not template or template == "" then
+		return nil
+	end
+	local fullpath = vim.api.nvim_buf_get_name(bufnr)
+	if fullpath == "" then
+		return nil
+	end
+	local filename = vim.fs.basename(fullpath)
+	local title = template:gsub("%${name}", filename):gsub("%${path}", fullpath)
+	return title
+end
+
 local function write_content(dir, text, bufnr)
 	local path = vim.fs.joinpath(dir, M.config.content_name)
 	util.write_text(path, text)
@@ -530,6 +557,11 @@ local function write_content(dir, text, bufnr)
 		local src_dir = name ~= "" and vim.fs.dirname(name) or nil
 		if src_dir and src_dir ~= "" then
 			pcall(util.write_text, vim.fs.joinpath(dir, "asset_root"), src_dir)
+		end
+		-- Write page title for browser to read on sync
+		local title = build_page_title(bufnr)
+		if title then
+			pcall(util.write_text, vim.fs.joinpath(dir, "page_title"), title)
 		end
 	end
 	return path
@@ -586,6 +618,8 @@ local function maybe_refresh(bufnr, silent)
 	-- In secondary takeover mode, M._server_instance is nil: fs_watch handles reload
 	if M._server_instance then
 		report_push("reload the preview", pcall(server.reload, M._server_instance, M.config.content_name))
+		-- Send page title along with content reload
+		send_page_title(bufnr)
 	end
 
 	if not silent and M.config.notify_on_refresh then
@@ -603,6 +637,32 @@ local function debounced_refresh(bufnr)
 		end
 		pcall(maybe_refresh, bufnr, true)
 	end, M.config.debounce_ms)
+end
+
+---------------------------------------------------------------------------
+-- Page title sync
+---------------------------------------------------------------------------
+
+--- Send page title to browser via SSE.
+---@param bufnr integer
+local function send_page_title(bufnr)
+	local title = build_page_title(bufnr)
+	if not title then
+		return
+	end
+	local payload = vim.json.encode({ title = title })
+	if M._server_instance then
+		report_push("send page title", pcall(server.send_event, M._server_instance, "title", payload))
+	elseif M._takeover_port then
+		local port = M._takeover_port
+		require("mdkite.remote").send_event(port, "title", payload, M._token, function(sent, cause)
+			if not sent then
+				vim.schedule(function()
+					report_remote("send page title", port, cause)
+				end)
+			end
+		end)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -672,6 +732,9 @@ local function set_autocmds_for_buffer(bufnr)
 			desc = "mdkite scroll sync",
 		})
 	end
+
+	-- Send page title on initial connection and when buffer changes
+	-- Note: Initial title is sent from M.start() after browser connects
 end
 
 ---------------------------------------------------------------------------
@@ -1080,6 +1143,12 @@ function M.start()
 		-- No browser tab connected (user closed it)? Re-open.
 		if M.config.open_browser and server.connected_client_count(inst) == 0 then
 			open_later(url)
+		end
+
+		-- Write page title file for browser to read on sync
+		local title = build_page_title(bufnr)
+		if title and dir then
+			pcall(util.write_text, vim.fs.joinpath(dir, "page_title"), title)
 		end
 	end
 end

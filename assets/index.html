@@ -1289,6 +1289,17 @@
             if (!initial && text === lastContent) return;
             lastContent = text;
 
+            // Fetch page title from sidecar file
+            try {
+                const titleResp = await fetch(withToken('/page_title'));
+                if (titleResp.ok) {
+                    const title = await titleResp.text();
+                    if (title && title.trim()) {
+                        document.title = title.trim();
+                    }
+                }
+            } catch (_) {}
+
             try {
                 capturedFrontMatter = null;
                 const html = md.render(text);
@@ -1410,6 +1421,14 @@
                     if (data.line == null) return;
                     lastScrollData = data;
                     scrollToSourceLine(data.line, data.total || 1);
+                } catch (_) {}
+            });
+            evtSource.addEventListener('title', (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.title) {
+                        document.title = data.title;
+                    }
                 } catch (_) {}
             });
             evtSource.addEventListener('open', () => {
