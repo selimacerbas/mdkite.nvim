@@ -541,7 +541,12 @@ local function build_page_title(bufnr)
 		return nil
 	end
 	local filename = vim.fs.basename(fullpath)
-	local title = template:gsub("%${name}", filename):gsub("%${path}", fullpath)
+	-- Use function replacements to avoid interpreting % in paths as gsub
+	-- capture references (e.g. a file named "test%20file.md" would cause
+	-- an error if passed as the replacement string directly).
+	local title = template
+		:gsub("%${name}", function() return filename end)
+		:gsub("%${path}", function() return fullpath end)
 	return title
 end
 
@@ -985,7 +990,7 @@ function M.start()
 		local asked_host = M.config.host
 		-- vim.pesc keeps a content_name or index_name with pattern characters exact.
 		-- The write's temporaries (.<name>.<pid>.tmp) at any depth: the dot rule that hides them is the sibling's own.
-		local protected = { "^/" .. vim.pesc(M.config.content_name) .. "$", "^/asset_root$", "/%.[^/]+%.%d+%.tmp$" }
+		local protected = { "^/" .. vim.pesc(M.config.content_name) .. "$", "^/asset_root$", "^/page_title$", "/%.[^/]+%.%d+%.tmp$" }
 		if not is_loopback(asked_host) then
 			-- Any other bind's index is gated too; the ?t= URL unlocks it.
 			table.insert(protected, "^/$")
