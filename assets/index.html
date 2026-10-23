@@ -1289,7 +1289,7 @@
             if (!initial && text === lastContent) return;
             lastContent = text;
 
-            // Fetch page title from sidecar file
+            // The tab title comes from the page_title sidecar, read on each sync.
             try {
                 const titleResp = await fetch(withToken('/page_title'));
                 if (titleResp.ok) {
@@ -1421,14 +1421,6 @@
                     if (data.line == null) return;
                     lastScrollData = data;
                     scrollToSourceLine(data.line, data.total || 1);
-                } catch (_) {}
-            });
-            evtSource.addEventListener('title', (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.title) {
-                        document.title = data.title;
-                    }
                 } catch (_) {}
             });
             evtSource.addEventListener('open', () => {

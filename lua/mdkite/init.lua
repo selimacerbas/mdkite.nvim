@@ -143,7 +143,7 @@ M.config = {
 	-- Browser tab title template. Supports placeholders:
 	-- ${name} = filename without path (e.g. "README.md")
 	-- ${path} = full file path
-	-- nil or "" = use default "mdkite"
+	-- "" or false = keep the page's own title, "mdkite"
 	page_title = "${name}",
 
 	hooks = {
@@ -533,7 +533,7 @@ end
 ---@return string|nil
 local function build_page_title(bufnr)
 	local template = M.config.page_title
-	if not template or template == "" then
+	if type(template) ~= "string" or template == "" then
 		return nil
 	end
 	local fullpath = vim.api.nvim_buf_get_name(bufnr)
@@ -545,8 +545,12 @@ local function build_page_title(bufnr)
 	-- capture references (e.g. a file named "test%20file.md" would cause
 	-- an error if passed as the replacement string directly).
 	local title = template
-		:gsub("%${name}", function() return filename end)
-		:gsub("%${path}", function() return fullpath end)
+		:gsub("%${name}", function()
+			return filename
+		end)
+		:gsub("%${path}", function()
+			return fullpath
+		end)
 	return title
 end
 
@@ -563,10 +567,14 @@ local function write_content(dir, text, bufnr)
 		if src_dir and src_dir ~= "" then
 			pcall(util.write_text, vim.fs.joinpath(dir, "asset_root"), src_dir)
 		end
-		-- Write page title for browser to read on sync
+		-- Sidecar holding the tab title the browser reads on each sync; a
+		-- buffer with no title removes the last one, so it does not linger.
 		local title = build_page_title(bufnr)
+		local title_path = vim.fs.joinpath(dir, "page_title")
 		if title then
-			pcall(util.write_text, vim.fs.joinpath(dir, "page_title"), title)
+			pcall(util.write_text, title_path, title)
+		else
+			os.remove(title_path)
 		end
 	end
 	return path
@@ -603,36 +611,6 @@ local function report_remote(what, port, cause)
 	vim.notify(("mdkite: could not %s: %s"):format(what, tostring(cause)), vim.log.levels.WARN)
 end
 
----------------------------------------------------------------------------
--- Page title sync
----------------------------------------------------------------------------
-
---- Send page title to browser via SSE.
----@param bufnr integer
-local function send_page_title(bufnr)
-	local title = build_page_title(bufnr)
-	if not title then
-		return
-	end
-	local payload = vim.json.encode({ title = title })
-	if M._server_instance then
-		report_push("send page title", pcall(server.send_event, M._server_instance, "title", payload))
-	elseif M._takeover_port then
-		local port = M._takeover_port
-		require("mdkite.remote").send_event(port, "title", payload, M._token, function(sent, cause)
-			if not sent then
-				vim.schedule(function()
-					report_remote("send page title", port, cause)
-				end)
-			end
-		end)
-	end
-end
-
----------------------------------------------------------------------------
--- Refresh logic
----------------------------------------------------------------------------
-
 local function maybe_refresh(bufnr, silent)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -653,8 +631,6 @@ local function maybe_refresh(bufnr, silent)
 	-- In secondary takeover mode, M._server_instance is nil: fs_watch handles reload
 	if M._server_instance then
 		report_push("reload the preview", pcall(server.reload, M._server_instance, M.config.content_name))
-		-- Send page title along with content reload
-		send_page_title(bufnr)
 	end
 
 	if not silent and M.config.notify_on_refresh then
@@ -990,7 +966,8 @@ function M.start()
 		local asked_host = M.config.host
 		-- vim.pesc keeps a content_name or index_name with pattern characters exact.
 		-- The write's temporaries (.<name>.<pid>.tmp) at any depth: the dot rule that hides them is the sibling's own.
-		local protected = { "^/" .. vim.pesc(M.config.content_name) .. "$", "^/asset_root$", "^/page_title$", "/%.[^/]+%.%d+%.tmp$" }
+		local protected =
+			{ "^/" .. vim.pesc(M.config.content_name) .. "$", "^/asset_root$", "^/page_title$", "/%.[^/]+%.%d+%.tmp$" }
 		if not is_loopback(asked_host) then
 			-- Any other bind's index is gated too; the ?t= URL unlocks it.
 			table.insert(protected, "^/$")
@@ -1149,12 +1126,6 @@ function M.start()
 		-- No browser tab connected (user closed it)? Re-open.
 		if M.config.open_browser and server.connected_client_count(inst) == 0 then
 			open_later(url)
-		end
-
-		-- Write page title file for browser to read on sync
-		local title = build_page_title(bufnr)
-		if title and dir then
-			pcall(util.write_text, vim.fs.joinpath(dir, "page_title"), title)
 		end
 	end
 end

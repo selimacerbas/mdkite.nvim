@@ -4,6 +4,10 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Added
+
+- `page_title` option: the browser tab is named after the previewed file, so several preview tabs tell apart. The template fills `${name}` with the file name and `${path}` with its full path, and defaults to `"${name}"`; `""` or `false` keeps the page's own title, `mdkite`. The title is a `page_title` sidecar beside `content.md`, gated by the session token like `content.md`, and the page reads it on each sync (#42).
+
 ## [2.1.0] - 2026-10-02
 
 ### Added

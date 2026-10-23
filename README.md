@@ -173,6 +173,8 @@ require("mdkite").setup({
   -- 0.5 = middle of viewport (default), 1.0 = bottom edge (no extra space)
   bottom_padding = 0.5,
 
+  page_title = "${name}",               -- browser tab title: ${name} = file name, ${path} = full path; "" or false keeps "mdkite"
+
   hooks = {
     on_start = nil,   -- fun(url: string)|nil, called after preview starts
     on_stop  = nil,   -- fun()|nil, called after preview stops
@@ -317,7 +319,7 @@ Browser-side libraries are loaded from CDN (cached by your browser):
 
 ## Security
 
-- **Local by default.** The preview server binds to `127.0.0.1`. A per-session 128-bit token gates five surfaces: your buffer content (`content.md`), the `asset_root` sidecar, the SSE stream, the event-injection endpoint and the asset route; with any `host` but `127.0.0.1` and `localhost`, the preview page itself requires it too (see *Remote access* above). [SECURITY.md](SECURITY.md) says what the token keeps out on each bind.
+- **Local by default.** The preview server binds to `127.0.0.1`. A per-session 128-bit token gates six surfaces: your buffer content (`content.md`), the `asset_root` and `page_title` sidecars, the SSE stream, the event-injection endpoint and the asset route; with any `host` but `127.0.0.1` and `localhost`, the preview page itself requires it too (see *Remote access* above). [SECURITY.md](SECURITY.md) says what the token keeps out on each bind.
 - **Raw HTML is rendered by default** (GitHub-like). HTML embedded in markdown runs inside the preview page. With `allow_raw_html = false` the preview is meant to render embedded HTML as text, and that switch is being hardened, so a file you do not trust is previewed at your own risk today.
 - **Browser libraries load from CDNs** (jsdelivr/unpkg, see *Dependencies*). Rendering requires internet access, and a compromised script served from a CDN would run in the page that holds the token (see [SECURITY.md](SECURITY.md)). Vendoring the assets locally is planned ([#27](https://github.com/selimacerbas/mdkite.nvim/issues/27)).
 - **`custom_css` files are inlined into the preview page** verbatim. Point it only at files you trust.
