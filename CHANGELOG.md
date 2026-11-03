@@ -6,7 +6,7 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ### Fixed
 
-- An image whose path markdown-it percent-encodes, such as one with non-ASCII characters (`![](./测试.png)`) or a space (`![](<my pic.png>)`), now previews. Before, the page encoded the already encoded path a second time and the asset route answered 404 (#47).
+- An image whose path markdown-it percent-encodes, such as one with non-ASCII characters (`![](./测试.png)`) or a space (`![](<my pic.png>)`), now previews. Before, the page encoded the already encoded path a second time and the asset route answered 404 (#47). A file whose own name holds a `%xx` sequence is now named with its `%` escaped, `![](50%2525.png)` for `50%25.png`, as CommonMark reads it.
 
 ## [2.1.0] - 2026-10-02
 

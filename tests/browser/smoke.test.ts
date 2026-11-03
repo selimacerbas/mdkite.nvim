@@ -30,7 +30,19 @@ const failedRequests: string[] = [];
 const badResponses: string[] = [];
 const pending = new Set<Request>();
 
-const IMAGES = ["测试.png", "my pic.png"];
+// Each file beside the document and the reference that names it: the first
+// two are percent-encoded by markdown-it, 50%25.png names a literal %25 the
+// way CommonMark escapes it, q#r.png an escaped # and a#b+c&d.png the
+// characters a query or a fragment would read, and the raw-HTML 100%.png is
+// no valid percent-encoding, so the page sends it as written.
+const IMAGES: [string, string][] = [
+  ["测试.png", "![cjk](./测试.png)"],
+  ["my pic.png", "![spaced](<my pic.png>)"],
+  ["50%25.png", "![percent](50%2525.png)"],
+  ["q#r.png", "![hash](q%23r.png)"],
+  ["a#b+c&d.png", "![query](<a#b+c&d.png>)"],
+  ["100%.png", '<img alt="raw" src="100%.png">'],
+];
 
 const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
 const readText = (p: string) => (p && existsSync(p) ? readFileSync(p, "utf8") : "");
@@ -201,8 +213,8 @@ beforeAll(async () => {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
     "base64",
   );
-  for (const name of IMAGES) writeFileSync(join(work, name), png);
-  writeFileSync(md, "# Smoke\n\nfirst paragraph\n\n![cjk](./测试.png) ![spaced](<my pic.png>)\n");
+  for (const [name] of IMAGES) writeFileSync(join(work, name), png);
+  writeFileSync(md, `# Smoke\n\nfirst paragraph\n\n${IMAGES.map(([, ref]) => ref).join(" ")}\n`);
   const lua = JSON.stringify;
   const setup =
     "lua require('mdkite').setup({ open_browser = false, instance_mode = 'multi', debounce_ms = 50, " +
@@ -265,7 +277,7 @@ test("renders the buffer and follows an edit through the plugin's autocmds and S
         { timeout: 15_000 },
       )
       .catch(() => {
-        throw new Error(`the images ${JSON.stringify(IMAGES)} never loaded within 15000 ms`);
+        throw new Error(`the images ${JSON.stringify(IMAGES.map(([name]) => name))} never loaded within 15000 ms`);
       });
     // The page keeps the token it was handed under its own name, as
     // kitehost's client keeps kitehost:t, so a refresh finds it there.
