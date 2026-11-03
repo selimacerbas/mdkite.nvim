@@ -4,6 +4,10 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Fixed
+
+- An image whose path markdown-it percent-encodes, such as one with non-ASCII characters (`![](./测试.png)`) or a space (`![](<my pic.png>)`), now previews. Before, the page encoded the already encoded path a second time and the asset route answered 404 (#47).
+
 ## [2.1.0] - 2026-10-02
 
 ### Added

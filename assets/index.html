@@ -1220,6 +1220,19 @@
         }
 
         // ── Copy button on code blocks ────────────────────────────────
+        // markdown-it percent-encodes the src it renders (测试.jpg becomes
+        // %E6%B5%8B%E8%AF%95.jpg, a space %20) and the route decodes p once,
+        // so the path is decoded here before it is encoded into p, or the
+        // route looks for the encoded name (#47). A raw-HTML src that is not
+        // valid percent-encoding, such as 100%.png, is sent as written.
+        function assetPath(src) {
+            try {
+                return decodeURIComponent(src);
+            } catch (e) {
+                return src;
+            }
+        }
+
         // Relative image paths resolve against the served workspace, which
         // only contains the rendered content: rewrite them to the token-
         // gated asset route, which resolves against the source file's dir.
@@ -1229,7 +1242,7 @@
             rootEl.querySelectorAll('img[src]').forEach(img => {
                 const src = img.getAttribute('src');
                 if (!src || /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/|\/|#)/.test(src)) return;
-                img.setAttribute('src', withToken('/__live/asset?p=' + encodeURIComponent(src)));
+                img.setAttribute('src', withToken('/__live/asset?p=' + encodeURIComponent(assetPath(src))));
             });
         }
 
