@@ -30,6 +30,20 @@ const failedRequests: string[] = [];
 const badResponses: string[] = [];
 const pending = new Set<Request>();
 
+// Each file beside the document and the reference that names it: the first
+// two are percent-encoded by markdown-it, 50%25.png names a literal %25 the
+// way CommonMark escapes it, q#r.png an escaped # and a#b+c&d.png the
+// characters a query or a fragment would read, and the raw-HTML 100%.png is
+// no valid percent-encoding, so the page sends it as written.
+const IMAGES: [string, string][] = [
+  ["测试.png", "![cjk](./测试.png)"],
+  ["my pic.png", "![spaced](<my pic.png>)"],
+  ["50%25.png", "![percent](50%2525.png)"],
+  ["q#r.png", "![hash](q%23r.png)"],
+  ["a#b+c&d.png", "![query](<a#b+c&d.png>)"],
+  ["100%.png", '<img alt="raw" src="100%.png">'],
+];
+
 const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
 const readText = (p: string) => (p && existsSync(p) ? readFileSync(p, "utf8") : "");
 
@@ -192,7 +206,15 @@ beforeAll(async () => {
     env[`XDG_${k}_HOME`] = join(work, k.toLowerCase());
     mkdirSync(join(work, k.toLowerCase()));
   }
-  writeFileSync(md, "# Smoke\n\nfirst paragraph\n");
+  // Two images beside the document whose paths markdown-it percent-encodes
+  // in the src it renders (issue #47): a name with non-ASCII characters and
+  // one with a space. A 1x1 PNG, so a loaded image has a natural width.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  for (const [name] of IMAGES) writeFileSync(join(work, name), png);
+  writeFileSync(md, `# Smoke\n\nfirst paragraph\n\n${IMAGES.map(([, ref]) => ref).join(" ")}\n`);
   const lua = JSON.stringify;
   const setup =
     "lua require('mdkite').setup({ open_browser = false, instance_mode = 'multi', debounce_ms = 50, " +
@@ -242,7 +264,21 @@ test("renders the buffer and follows an edit through the plugin's autocmds and S
     await page!.goto(url, { timeout: 40_000 });
     await page!.waitForSelector("#content h1", { timeout: 20_000 });
     expect(await page!.textContent("#content h1")).toBe("Smoke");
-    expect(await page!.locator("#content p").count()).toBe(1);
+    expect(await page!.locator("#content p").count()).toBe(2);
+    // Each image loads through the asset route; a path encoded twice named
+    // no file and answered 404 (issue #47).
+    await page!
+      .waitForFunction(
+        (n) => {
+          const imgs = [...document.querySelectorAll<HTMLImageElement>("#content img")];
+          return imgs.length === n && imgs.every((img) => img.complete && img.naturalWidth > 0);
+        },
+        IMAGES.length,
+        { timeout: 15_000 },
+      )
+      .catch(() => {
+        throw new Error(`the images ${JSON.stringify(IMAGES.map(([name]) => name))} never loaded within 15000 ms`);
+      });
     // The page keeps the token it was handed under its own name, as
     // kitehost's client keeps kitehost:t, so a refresh finds it there.
     const token = await within(
@@ -270,7 +306,7 @@ test("renders the buffer and follows an edit through the plugin's autocmds and S
       .catch(() => {
         throw new Error("the edit never reached the page within 15000 ms: the update was missed");
       });
-    expect(await page!.locator("#content p").count()).toBe(2);
+    expect(await page!.locator("#content p").count()).toBe(3);
     const reloads: string[] = await within(5_000, "reading the reloads", page!.evaluate(() => (window as any).__reloads));
     // Decoded, since the payload's escaping is the JSON library's (0.10 writes a slash as \/).
     const pushed = reloads.some((d) => {
