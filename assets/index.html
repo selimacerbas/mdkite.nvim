@@ -977,6 +977,9 @@
         let ovZoom = 1;
         let ovFitMode = 'width';
         let ovDragging = false, ovStartX = 0, ovStartY = 0, ovStartL = 0, ovStartT = 0;
+        // Which diagram the overlay is showing, so live edits can refresh it.
+        let ovBlockId = null;
+        let ovSourceLine = null;
 
         const setStatus = (t) => { if (statusEl) statusEl.textContent = t || ''; };
         const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1010,9 +1013,10 @@
             });
         }
 
-        themeBtn.addEventListener('click', () => {
+        themeBtn.addEventListener('click', async () => {
             applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
-            renderAllMermaidBlocks();
+            await renderAllMermaidBlocks();
+            refreshOverlayFromBlock();
         });
 
         // ── Markdown-it setup ─────────────────────────────────────────
@@ -1337,6 +1341,10 @@
 
                 attachCopyButtons();
 
+                // The overlay holds a copy of one diagram's SVG, so a sync
+                // would leave it stale while zoomed in. Redraw it in place.
+                refreshOverlayFromBlock();
+
                 setStatus('Updated ' + nowTime());
             } catch (e) {
                 console.error('[mdkite] render error:', e);
@@ -1425,22 +1433,25 @@
         }
 
         // ── Expand overlay (fullscreen diagram zoom/pan) ──────────────
-        function openOverlay(svgHtml) {
+        function overlayBaseSize(svg) {
+            if (!svg) return;
+            const vb = svg.getAttribute('viewBox');
+            if (vb) {
+                const parts = vb.trim().split(/\s+/).map(Number);
+                if (parts.length === 4) { ovBaseW = parts[2]; ovBaseH = parts[3]; return; }
+            }
+            ovBaseW = parseFloat(svg.getAttribute('width')) || 800;
+            ovBaseH = parseFloat(svg.getAttribute('height')) || 600;
+        }
+
+        function openOverlay(svgHtml, blockId, sourceLine) {
+            ovBlockId = blockId || null;
+            ovSourceLine = Number.isFinite(sourceLine) ? sourceLine : null;
             ovSvgSource = svgHtml;
             overlayPanzoomInner.innerHTML = svgHtml;
             overlay.classList.add('active');
 
-            const svg = overlayPanzoomInner.querySelector('svg');
-            if (svg) {
-                const vb = svg.getAttribute('viewBox');
-                if (vb) {
-                    const parts = vb.trim().split(/\s+/).map(Number);
-                    if (parts.length === 4) { ovBaseW = parts[2]; ovBaseH = parts[3]; }
-                } else {
-                    ovBaseW = parseFloat(svg.getAttribute('width')) || 800;
-                    ovBaseH = parseFloat(svg.getAttribute('height')) || 600;
-                }
-            }
+            overlayBaseSize(overlayPanzoomInner.querySelector('svg'));
 
             ovZoom = 1;
             ovFitMode = 'width';
@@ -1451,6 +1462,67 @@
         function closeOverlay() {
             overlay.classList.remove('active');
             overlayPanzoomInner.innerHTML = '';
+            ovBlockId = null;
+            ovSourceLine = null;
+        }
+
+        // The block id is its token index, which shifts when text above the
+        // diagram is edited, so prefer the nearest source line and keep the
+        // id only as a tie-breaker.
+        function overlayBlock() {
+            const blocks = contentEl.querySelectorAll('.mermaid-block');
+            if (!blocks.length) return null;
+            if (ovSourceLine !== null) {
+                let best = null, bestDist = Infinity;
+                blocks.forEach((el) => {
+                    const line = Number(el.dataset.sourceLine);
+                    if (!Number.isFinite(line)) return;
+                    const dist = Math.abs(line - ovSourceLine);
+                    if (dist < bestDist || (dist === bestDist && el.id === ovBlockId)) {
+                        best = el;
+                        bestDist = dist;
+                    }
+                });
+                if (best) return best;
+            }
+            return ovBlockId ? document.getElementById(ovBlockId) : null;
+        }
+
+        // Redraw the zoomed diagram after its source changed. Zoom level and
+        // fit mode are kept; the pan position is kept as a fraction of the
+        // scrollable range so the same region stays in view as it grows.
+        function refreshOverlayFromBlock() {
+            if (!overlay.classList.contains('active') || ovBlockId === null) return;
+            const block = overlayBlock();
+            if (!block) return; // diagram removed: keep the last render on screen
+            ovBlockId = block.id || ovBlockId;
+            const line = Number(block.dataset.sourceLine);
+            if (Number.isFinite(line)) ovSourceLine = line;
+
+            const wrap = block.querySelector('.mermaid-svg-wrap');
+            const svg = wrap && wrap.querySelector('svg');
+            // No SVG yet: still rendering, or the source is broken. Keep the
+            // last good render rather than blanking the overlay.
+            if (!svg) return;
+
+            const html = svg.outerHTML;
+            if (html === ovSvgSource) return;
+
+            const maxX = overlayPanzoom.scrollWidth - overlayPanzoom.clientWidth;
+            const maxY = overlayPanzoom.scrollHeight - overlayPanzoom.clientHeight;
+            const fx = maxX > 0 ? overlayPanzoom.scrollLeft / maxX : 0;
+            const fy = maxY > 0 ? overlayPanzoom.scrollTop / maxY : 0;
+
+            ovSvgSource = html;
+            overlayPanzoomInner.innerHTML = html;
+            overlayBaseSize(overlayPanzoomInner.querySelector('svg'));
+            if (ovFitMode === 'none') applyOverlayZoom();
+            else updateOverlayFit();
+
+            const newMaxX = overlayPanzoom.scrollWidth - overlayPanzoom.clientWidth;
+            const newMaxY = overlayPanzoom.scrollHeight - overlayPanzoom.clientHeight;
+            overlayPanzoom.scrollLeft = fx * Math.max(0, newMaxX);
+            overlayPanzoom.scrollTop = fy * Math.max(0, newMaxY);
         }
 
         function applyOverlayZoom() {
@@ -1549,7 +1621,7 @@
             const wrap = block.querySelector('.mermaid-svg-wrap');
             if (!wrap) return;
             const svg = wrap.innerHTML;
-            if (svg) openOverlay(svg);
+            if (svg) openOverlay(svg, blockId, Number(block.dataset.sourceLine));
         });
 
         // Re-apply scroll when layout shifts (images loading, etc.)
