@@ -4,6 +4,10 @@ All notable changes to this project; versions follow SemVer. From `[Unreleased]`
 
 ## [Unreleased]
 
+### Fixed
+
+- The fullscreen diagram overlay redraws when its source changes, so a live edit or a theme switch no longer leaves the zoomed diagram stale; the zoom, the fit mode and the same region in view are kept.
+
 ## [2.1.0] - 2026-10-02
 
 ### Added
